@@ -1,0 +1,110 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use POSIX ":sys_wait_h";
+
+# Esto incluye el archivo buffer.pl con las funciones put y get
+do 'buffer.pl';
+
+if ( $#ARGV != 0 ) {  # $#ARGV entrega el numero de elementos del arreglo $ARGV
+                      # menos 1.
+  print "uso: testmon3 <device>\n";
+  exit 1;
+}
+
+my ($dev)= @ARGV;
+
+print "Probando que un proceso que espera obtener el monitor puede ser\n";
+print "interrumpido\n";
+
+print "Abrimos el monitor, pero no lo cerramos intencionalmente para que\n";
+print "el hijo espere indefinidamente\n";
+open(my $BUF_FATHER, "+<", $dev) || die "error: fallo el device";
+
+my $pid= fork();
+if ($pid==0) {
+  print "El open en el hijo se debe quedar esperando indefinidamente\n";
+  open(my $BUF_CHILD, "+<", $dev) || die "error: fallo el device";
+  close($BUF_CHILD); # No deberia llegar a este punto
+}
+else {
+  sleep(1); # Le damos tiempo al hijo para intentar abrir el monitor
+  my $pid2= waitpid($pid, WNOHANG); # El hijo no deberia haber terminado
+  if ($pid2==$pid) {
+    die "error: el hijo $pid2 no debio haber obtenido el monitor";
+  }
+  print "Interrumpimos el hijo\n";
+  kill(2, $pid);
+  print "El hijo debe terminar de inmediato.  Si no ocurre, la operacion\n";
+  print "open no es interrumpible.  Mate el proceso con control-C.\n";
+  waitpid($pid, 0); # Deberia haber terminado
+  close($BUF_FATHER);
+  print "correcto: el hijo fue interrumpido\n";
+}
+
+print "-------------------------------------------------------\n";
+print "Probando que un proceso que espera en un read puede ser\n";
+print "interrumpido\n";
+
+# Escribimos "hello" en el monitor
+open($BUF_FATHER, "+<", $dev) || die "error: fallo el device";
+print $BUF_FATHER "hello";
+close($BUF_FATHER);
+
+$pid= fork();
+if ($pid==0) {
+  open(my $BUF_CHILD, "+<", $dev) || die "error: fallo el device";
+  my $lin= <$BUF_CHILD>; # Deberia leer "hello"
+  if ($lin != "hello") {
+    die "error: no se lee el texto correcto";
+  }
+  $lin= <$BUF_CHILD>; # Se queda esperando indefinidamente
+}
+else {
+  sleep(1);  # Damos tiempo al hijo para que intente leer el monitor
+  my $pid2= waitpid($pid, WNOHANG);  # El hijo no deberia haber terminado
+  if ($pid2==$pid) {
+    die "error: el hijo $pid2 no debio haber obtenido el monitor";
+  }
+  kill(2, $pid); # Interrumpimos el hijo
+  print "El hijo debe terminar de inmediato.  Si no ocurre, la operacion\n";
+  print "read no es interrumpible.  Mate el proceso con control-C.\n";
+  waitpid($pid, 0);
+  print "correcto: el hijo fue interrumpido en un read\n";
+}
+
+print "----------------------------------------------------------------\n";
+print "Probando que un proceso que espera obtener el monitor despues de\n";
+print "un read puede ser interrumpido\n";
+
+$pid= fork();
+if ($pid==0) {
+  open(my $BUF_CHILD, "+<", $dev) || die "error: fallo el device";
+  my $lin= <$BUF_CHILD>;
+  if ($lin != "hello") {
+    die "error: no se lee el texto correcto";
+  }
+  $lin= <$BUF_CHILD>; # Se queda esperando indefinidamente
+}
+else {
+  sleep(1);  # Damos tiempo al hijo para que lea el monitor
+  # Abrimos el monitor y no lo cerramos para que el hijo no pueda continuar
+  # despues del read
+  open($BUF_FATHER, "+<", $dev) || die "error: fallo el device";
+  print $BUF_FATHER "goodbye"; # El hijo deberia esperar indefinidamente
+                               # en espera del monitor
+  sleep(1);
+  my $pid2= waitpid($pid, WNOHANG);  # El hijo no deberia haber terminado
+  if ($pid2==$pid) {
+    die "error: el hijo $pid2 no debio haber obtenido el monitor";
+  }
+  kill(2, $pid); # Interrumpimos el hijo
+  print "El hijo debe terminar de inmediato.  Si no ocurre, la operacion\n";
+  print "read no es interrumpible.  Mate el proceso con control-C.\n";
+  waitpid($pid, 0);
+  close($BUF_FATHER);
+  print "correcto: el hijo fue interrumpido mientras espera reobtener el\n";
+  print "monitor despues en la operacion read\n";
+  print "=== Felicitaciones: su tarea funciona correctamente ===\n";
+}

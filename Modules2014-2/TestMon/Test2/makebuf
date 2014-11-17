@@ -1,0 +1,8 @@
+#!/bin/sh
+if [ $# != 2 ]
+then
+  echo "uso: makebuf <buffer> <tamano-buffer>"
+  exit 1
+fi
+echo > $1 "0,$2"
+## la instruccion "echo" esta ejecutando un open + write + release sobre /dev/monitor

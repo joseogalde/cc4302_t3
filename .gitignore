@@ -1,0 +1,40 @@
+#Object files
+*.o
+*.o.*
+*.ko
+*.ko.*
+*.obj
+*.elf
+*.mod
+*.mod.*
+*.cmd
+*.cmd.*
+
+#Temp files
+*.~
+*.swp
+*.thumbs.db
+
+#Precompiled Headers
+*.gch
+*.pch
+
+#Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+#Shared objects
+*.dll
+*.so
+*.so.*
+*.dylib
+
+#Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex

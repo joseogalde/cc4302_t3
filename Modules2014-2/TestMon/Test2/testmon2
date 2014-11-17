@@ -1,0 +1,183 @@
+#!/usr/bin/perl
+
+# Programa de prueba para la tarea 3 de sistemas operativos.
+# Este script crea $n productores que depositaran cada uno $tot itemes
+# en un buffer representado en el device $monitor.  Por lo tanto el script
+# recibe 3 parametros: $monitor, $tot, $n
+
+# Yo probe con:
+#   % ./testmon2 /dev/monitor 500 20
+#   % ./testmon2 /dev/monitor 1000 50
+# Ambos terminaron exitosamente en un Ubuntu 12.04 LTS virtualizado.
+# El primero en 33 segundos y el segundo en 5 minutos y medio.
+#
+# Para tener una idea de que pasa cuando el device no esta bien implementado
+# como un monitor, compile e instale el device /dev/badmonitor en el
+# directorio .../Modules2014-2/BadMonitor y ejecute:
+#   % ./testmon2 /dev/badmonitor 1000 50
+# Este script le dira que algo fallo.
+
+
+# El buffer se almacena integralmente en el device (normalmente /dev/monitor).
+# El formato es el siguiente:
+# <cnt>:<tamano max>:<item1>:<item2>:etc
+# Ejemplos:
+#    0:2        Un buffer de tamano 2 vacio
+#    1:2:a      El mismo buffer con 1 solo item (a)
+#    2:2:a:b    El mismo buffer lleno con los items a y b
+#
+# Ud. siempre puede averiguar el estado actual del buffer con:
+#   % cat /dev/monitor
+# Esto nunca interfiere con el buen funcionamiento del productor/consumidor.
+#
+# Estudie el codigo de put y get al final de este archivo.
+# Aunque no conozca perl va a entender lo que hacen leyendo los comentarios.
+
+# Algo de burocracia
+use strict;
+use warnings;
+use POSIX ":sys_wait_h";
+
+# Esto incluye el archivo buffer.pl con las funciones put y get
+do 'buffer.pl';
+
+# Chequea que se suministren 3 parametros
+if ( $#ARGV != 2 ) {  # $#ARGV entrega el numero de elementos del arreglo $ARGV
+                      # menos 1.
+  print "uso: testmon2 <device> <n. itemes> <b. productores>\n";
+  exit 1;
+}
+
+# Decodifica los argumentos del comando testmon2
+my ($monitor, $tot, $n)= @ARGV;
+print "monitor=$monitor, itemes por productor=$tot, numero de productores=$n\n";
+
+# Se formatea el buffer escribiendo 0:2 en $monitor
+my $cmd= "./makebuf $monitor 2";
+print "inicializando el monitor con: $cmd\n";
+system($cmd);
+
+print "Creando $n procesos productores: ";
+my @pids;
+for (my $p= 0; $p< $n; $p++) {
+  my $pid= fork();  # Crea un proceso pesado
+  if ($pid!=0) {
+    # father
+    push(@pids, $pid);
+    print "$pid ";
+  }
+  else {
+    # child
+    my $i;
+    for ($i= 0; $i < $tot; $i++) {
+      # print "enviando $i de $tot\n";
+      put($monitor, $i);
+    }
+    print "Productor $$ terminado\n";
+    exit 0;
+  }
+}
+
+sleep(1);
+print "\n$n procesos creados\n";
+
+print "Numero de itemes que se produciran: ", $tot*$n, "\n";
+print "Recomendacion: lance en otro terminal el siguiente comando para\n";
+print "ver algunos estados intermedios del buffer:\n";
+print "\n   % cat $monitor\n\n";
+print "Si el buffer se queda estancado y este script no termina,\n";
+print "probablemente deba terminarlo con control-C.  Pero si su monitor no\n";
+print "implementa correctamente la interrumpibilidad de las operaciones,\n";
+print "entonces tendra que rebootear la maquina.  :-(\n";
+
+my @father;
+push (@father, $$);
+
+my $consumer= fork();
+if ($consumer==0) {
+  # el hijo es el consumidor: recibe todos los itemes y verifica
+  # que no falten ni que sobren itemes
+  my $res= 0;
+  my @vec;
+  my $j= 0;
+  for (my $j= 0; $j < $tot; $j++) {
+    push(@vec, 0);
+  }
+
+  {
+    $SIG{INT} = sub { die "\n\nMal: el consumidor solo recibio $j itemes\n"; };
+    for ($j= 0; $j < $tot*$n; $j++) {
+      # father
+      my $k= get($monitor);
+      # print "received $k\n";
+      if ($res==0 && $k<0 || $k>=$tot) {
+        $res= $k;
+      }
+      else {
+        $vec[$k]++;
+      }
+      if ( $j % 1000 == 0 && $j != 0) {
+        print "$j itemes recibidos\n";
+      }
+    }
+  }
+
+  my $terminate= 0;
+
+  for ($j= 0; $j<$tot && $terminate==0; $j++) {
+    if ($vec[$j] != $n) {
+      print "El numero de veces que se recibio el item $j ",
+            "es incorrecto: $vec[$j]\n";
+      $terminate= 1;
+    }
+  }
+
+  if ($res!=0) {
+    print "Se recibio erroneamente $res\n";
+    $terminate= 1;
+  }
+
+  open(my $BUF, "<", $monitor) || die "error: fallo el monitor";
+  my $mon=<$BUF>;
+  close($BUF);
+  if ($mon ne "0,2\n") {
+    print "El estado final del monitor es incorrecto: $mon\n";
+    $terminate= 1;
+  }
+
+  if ($terminate==0) {
+    print "Todos los itemes fueron correctamente recibidos\n";
+    print "El estado final del monitor es el esperado\n";
+    print "=== Bien: su modulo paso este test ===========\n";
+  }
+  else {
+    kill(2, @father);
+  }
+}
+else {
+  # el padre: cuando terminan todos los productores, mata al consumidor
+  # si no termina dentro de 5 segundos.
+  print "Proceso consumidor $consumer lanzado\n";
+  for (my $p= 0; $p<$n; $p++) {
+    waitpid ($pids[$p], 0);
+  }
+  print "Todos los productores terminaron\n";
+  print "Esperando 5 segundos a que termine el consumidor $consumer\n";
+  my $finished= 0;
+  for (my $j= 1; $j<=5 && $finished==0; $j++) {
+    sleep(1);
+    if (waitpid(-1, WNOHANG)==$consumer) {
+      $finished= 1;
+    }
+    else {
+      print "$j segundos esperando ...\n";
+    }
+  }
+  if ($finished==0) {
+    my @kill_list;
+    push(@kill_list, $consumer);
+    print "No termino.  Matando el consumidor $consumer\n";
+    kill(2, @kill_list); # mata al consumidor con control-C
+    waitpid $consumer, 0;
+  }
+}

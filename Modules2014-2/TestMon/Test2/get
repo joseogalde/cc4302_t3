@@ -1,0 +1,15 @@
+#!/usr/bin/perl
+
+# Esto incluye el archivo buffer.pl que contiene la funcion get
+do 'buffer.pl';
+
+if ($#ARGV != -1 ) {
+  die "uso: get\n";
+}
+my $monitor= "/dev/monitor";
+if (exists $ENV{'DEVMON'}) {
+  $monitor= $ENV{'DEVMON'};
+}
+
+print get($monitor) . "\n";
+
